@@ -1,0 +1,62 @@
+# 可选方案：构建期用官方流程把 HuggingFace 上的 opus 模型转成 CTranslate2。
+#
+# 好处：用的是官方模型（Helsinki-NLP/OPUS-MT），不依赖第三方转换版。
+# 代价：构建阶段要下载 torch（几百 MB，国内网络可能超时，已加大 timeout/重试）。
+#
+# 用法：
+#   docker compose -f docker-compose.buildmodel.yml build
+#   docker compose -f docker-compose.buildmodel.yml up -d
+FROM python:3.11-slim AS builder
+
+ARG MT_SRC_MODEL=Helsinki-NLP/opus-mt-tc-big-en-zh
+ARG MT_QUANT=float32
+ARG HF_ENDPOINT=https://huggingface.co
+ARG PIP_INDEX_URL=https://pypi.org/simple
+
+ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+
+WORKDIR /build
+COPY requirements-build.txt convert_model.py ./
+# 同样要清掉 ctranslate2 .so 的可执行栈标记，否则容器里加载失败
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl patchelf \
+ && rm -rf /var/lib/apt/lists/*
+RUN pip install --timeout 180 --retries 5 -i "$PIP_INDEX_URL" -r requirements-build.txt \
+ && find /usr/local/lib/python3.11/site-packages -name '*.so*' \
+      -exec sh -c 'patchelf --clear-execstack "$1" 2>/dev/null || true' _ {} \; \
+ && MT_SRC_MODEL="$MT_SRC_MODEL" MT_QUANT="$MT_QUANT" python convert_model.py \
+ # 推理要用原 repo 里的 sentencepiece 模型做编解码，一并放进输出目录
+ && for f in source.spm target.spm; do \
+      curl -fsSL -o "/opt/mt-model/$f" "$HF_ENDPOINT/$MT_SRC_MODEL/resolve/main/$f" \
+      || echo "[build] missing $f"; \
+    done \
+ # NLLB 的 tokenizer（含语言标签）也要放到模型目录里，运行时不联网
+ && mkdir -p /opt/mt-model/tokenizer \
+ && for f in tokenizer.json tokenizer_config.json special_tokens_map.json sentencepiece.bpe.model; do \
+      curl -fsSL -o "/opt/mt-model/tokenizer/$f" "$HF_ENDPOINT/$MT_SRC_MODEL/resolve/main/$f" \
+      || echo "[build] missing $f"; \
+    done \
+ && rm -rf ~/.cache/huggingface
+
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    MT_MODEL_DIR=/opt/mt-model
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl patchelf \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt \
+ # ctranslate2 自带的 .so 带可执行栈标记，部分内核（含 WSL2 上的 Docker）会拒绝加载
+ && find /usr/local/lib/python3.11/site-packages -name '*.so*' \
+      -exec sh -c 'patchelf --clear-execstack "$1" 2>/dev/null || true' _ {} \;
+
+COPY --from=builder /opt/mt-model /opt/mt-model
+COPY app.py .
+
+EXPOSE 9910
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "9910"]

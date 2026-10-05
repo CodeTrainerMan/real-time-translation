@@ -1,0 +1,13 @@
+node_modules/
+out/
+release/
+dist/
+**/models/
+.build-logs/
+.idea/
+.vscode/
+.vite/
+*.local
+*.tsbuildinfo
+*.log
+.DS_Store

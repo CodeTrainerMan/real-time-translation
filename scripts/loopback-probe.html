@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+  <body>
+    <script>
+      window.runProbe = async function (OUT, SECONDS) {
+        const fs = require('fs')
+        let err = ''
+        let stream = null
+
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: { mandatory: { chromeMediaSource: 'desktop' } },
+            video: { mandatory: { chromeMediaSource: 'desktop' } }
+          })
+        } catch (e) {
+          err += 'desktop:' + e.message + ' | '
+        }
+
+        if (!stream || stream.getAudioTracks().length === 0) {
+          try {
+            stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
+          } catch (e) {
+            err += 'display:' + e.message
+          }
+        }
+        if (!stream || stream.getAudioTracks().length === 0) return { ok: false, err }
+
+        const track = stream.getAudioTracks()[0]
+        const settings = track.getSettings ? track.getSettings() : {}
+
+        const ctx = new AudioContext({ sampleRate: 16000 })
+        const src = ctx.createMediaStreamSource(stream)
+        const proc = ctx.createScriptProcessor(4096, 1, 1)
+        const gain = ctx.createGain()
+        gain.gain.value = 0
+        const chunks = []
+        proc.onaudioprocess = (e) => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)))
+        src.connect(proc)
+        proc.connect(gain)
+        gain.connect(ctx.destination)
+
+        await new Promise((r) => setTimeout(r, SECONDS * 1000))
+
+        proc.onaudioprocess = null
+        stream.getTracks().forEach((t) => t.stop())
+        await ctx.close()
+
+        const total = chunks.reduce((n, c) => n + c.length, 0)
+        const data = new Float32Array(total)
+        let off = 0
+        for (const c of chunks) {
+          data.set(c, off)
+          off += c.length
+        }
+
+        let sq = 0
+        let peak = 0
+        let silent = 0
+        for (let i = 0; i < data.length; i++) {
+          const v = Math.abs(data[i])
+          sq += data[i] * data[i]
+          if (v > peak) peak = v
+          if (v < 0.001) silent++
+        }
+        const rms = Math.sqrt(sq / Math.max(1, data.length))
+
+        const buf = Buffer.alloc(44 + data.length * 2)
+        buf.write('RIFF', 0)
+        buf.writeUInt32LE(36 + data.length * 2, 4)
+        buf.write('WAVE', 8)
+        buf.write('fmt ', 12)
+        buf.writeUInt32LE(16, 16)
+        buf.writeUInt16LE(1, 20)
+        buf.writeUInt16LE(1, 22)
+        buf.writeUInt32LE(16000, 24)
+        buf.writeUInt32LE(32000, 28)
+        buf.writeUInt16LE(2, 32)
+        buf.writeUInt16LE(16, 34)
+        buf.write('data', 36)
+        buf.writeUInt32LE(data.length * 2, 40)
+        for (let i = 0; i < data.length; i++) {
+          const s = Math.max(-1, Math.min(1, data[i]))
+          buf.writeInt16LE(s < 0 ? s * 0x8000 : s * 0x7fff, 44 + i * 2)
+        }
+        fs.writeFileSync(OUT, buf)
+
+        return {
+          ok: true,
+          err,
+          rms: Number(rms.toFixed(5)),
+          peak: Number(peak.toFixed(4)),
+          silentPct: Math.round((silent / Math.max(1, data.length)) * 100),
+          seconds: Number((data.length / 16000).toFixed(2)),
+          settings
+        }
+      }
+    </script>
+  </body>
+</html>

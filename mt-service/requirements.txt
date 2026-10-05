@@ -1,0 +1,7 @@
+fastapi==0.115.6
+uvicorn==0.34.0
+pydantic==2.10.4
+ctranslate2==4.5.0
+sentencepiece==0.2.0
+transformers==4.46.3
+requests==2.32.3

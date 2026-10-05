@@ -1,0 +1,34 @@
+# 可选：构建期用官方流程转换 Helsinki-NLP 的模型（默认 tc-big-en-zh，质量更好）。
+#
+# 注意：构建阶段要下载 torch（几百 MB），国内网络慢/超时就改用主 docker-compose.yml。
+#
+# 用法：
+#   docker compose -f docker-compose.buildmodel.yml build
+#   docker compose -f docker-compose.buildmodel.yml up -d
+services:
+  mt:
+    build:
+      context: .
+      dockerfile: Dockerfile.buildmodel
+      args:
+        # NLLB-200-distilled-600M：Meta 的多语种专用翻译模型（600M，不是大模型）
+        MT_SRC_MODEL: "facebook/nllb-200-distilled-600M"
+        MT_QUANT: "int8"
+        HF_ENDPOINT: "https://huggingface.co"
+        # 国内可换成 https://pypi.tuna.tsinghua.edu.cn/simple 或 https://mirrors.aliyun.com/pypi/simple
+        PIP_INDEX_URL: "https://pypi.org/simple"
+    image: realtime-translation-mt:buildmodel
+    container_name: realtime-translation-mt
+    ports:
+      - "9910:9910"
+    environment:
+      MT_MODEL_DIR: "/opt/mt-model"
+      MT_DEVICE: "cpu"
+      MT_COMPUTE_TYPE: "int8"
+      MT_BEAM_SIZE: "4"
+      # NLLB 是多语种模型：用官方 tokenizer（构建期已下载进镜像，不联网）
+      MT_HF_TOKENIZER: "/opt/mt-model/tokenizer"
+      MT_SOURCE_CODE: "eng_Latn"
+      MT_TARGET_CODE: "zho_Hans"
+      HF_HUB_OFFLINE: "1"
+    restart: unless-stopped

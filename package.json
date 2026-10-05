@@ -1,0 +1,49 @@
+{
+  "name": "real-time-translation",
+  "version": "1.0.2",
+  "description": "本地模型驱动的实时字幕：Docker 内语音识别 + 本地翻译小工具 + 桌面悬浮字幕窗",
+  "main": "./out/main/index.js",
+  "author": "william",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "dist": "electron-vite build && electron-builder",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3",
+    "electron-vite": "^2.3.0",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.8"
+  },
+  "build": {
+    "appId": "com.local.realtime-translation",
+    "productName": "Real-timeTranslation",
+    "electronDist": "node_modules/electron/dist",
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png"
+    },
+    "files": [
+      "out/**/*",
+      "build/**/*"
+    ],
+    "asarUnpack": [
+      "build/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    }
+  }
+}

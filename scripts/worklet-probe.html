@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+  <body>
+    <script>
+      // 与 src/renderer/src/lib/audioCapture.ts 完全相同的 worklet 逻辑（数值写死）
+      const WORKLET_SOURCE = `
+class Pcm16Worklet extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.ratio = sampleRate / 16000;
+    this.pos = 0;
+    this.prev = 0;
+    this.out = new Int16Array(1600);
+    this.outLen = 0;
+    this.processCalls = 0;
+    this.emits = 0;
+  }
+  _emit(value) {
+    const s = Math.max(-1, Math.min(1, value));
+    this.out[this.outLen++] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    if (this.outLen >= this.out.length) {
+      this.port.postMessage(this.out.buffer, [this.out.buffer]);
+      this.out = new Int16Array(1600);
+      this.outLen = 0;
+      this.emits++;
+    }
+  }
+  process(inputs) {
+    this.processCalls++;
+    const input = inputs[0];
+    if (!input || input.length === 0) return true;
+    const channel = input[0];
+    if (!channel) return true;
+    const len = channel.length;
+    while (this.pos < len) {
+      const i = Math.floor(this.pos);
+      const frac = this.pos - i;
+      const a = i === 0 ? this.prev : channel[i - 1];
+      const b = channel[i];
+      this._emit(a * (1 - frac) + b * frac);
+      this.pos += this.ratio;
+    }
+    this.pos -= len;
+    this.prev = channel[len - 1];
+    return true;
+  }
+}
+registerProcessor('pcm16-worklet', Pcm16Worklet);
+`
+
+      window.runProbe = async function (OUT, SECONDS) {
+        const fs = require('fs')
+        let stream
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: { mandatory: { chromeMediaSource: 'desktop' } },
+            video: { mandatory: { chromeMediaSource: 'desktop' } }
+          })
+        } catch (e) {
+          return { ok: false, err: String(e) }
+        }
+        if (stream.getAudioTracks().length === 0) return { ok: false, err: '无音频轨' }
+
+        const ctx = new AudioContext({ sampleRate: 16000 })
+        const src = ctx.createMediaStreamSource(stream)
+        const gain = ctx.createGain()
+        gain.gain.value = 0
+
+        const url = URL.createObjectURL(new Blob([WORKLET_SOURCE], { type: 'application/javascript' }))
+        await ctx.audioWorklet.addModule(url)
+        URL.revokeObjectURL(url)
+
+        const node = new AudioWorkletNode(ctx, 'pcm16-worklet')
+        const chunks = []
+        node.port.onmessage = (e) => chunks.push(new Int16Array(e.data))
+        src.connect(node)
+        node.connect(gain)
+        gain.connect(ctx.destination)
+
+        await new Promise((r) => setTimeout(r, SECONDS * 1000))
+
+        node.port.onmessage = null
+        stream.getTracks().forEach((t) => t.stop())
+
+        const stats = await new Promise((resolve) => {
+          node.port.onmessage = (e) => resolve(e.data)
+          node.port.postMessage({ getStats: true })
+        })
+
+        const total = chunks.reduce((n, c) => n + c.length, 0)
+        let sq = 0
+        let peak = 0
+        for (let i = 0; i < total; i++) {
+          const c = chunks[Math.floor(i / 1600)]
+          const v = Math.abs(c[i % 1600] / 32768)
+          sq += v * v
+          if (v > peak) peak = v
+        }
+        const rms = Math.sqrt(sq / Math.max(1, total))
+
+        // 顺便写 wav
+        const buf = Buffer.alloc(44 + total * 2)
+        buf.write('RIFF', 0)
+        buf.writeUInt32LE(36 + total * 2, 4)
+        buf.write('WAVE', 8)
+        buf.write('fmt ', 12)
+        buf.writeUInt32LE(16, 16)
+        buf.writeUInt16LE(1, 20)
+        buf.writeUInt16LE(1, 22)
+        buf.writeUInt32LE(16000, 24)
+        buf.writeUInt32LE(32000, 28)
+        buf.writeUInt16LE(2, 32)
+        buf.writeUInt16LE(16, 34)
+        buf.write('data', 36)
+        buf.writeUInt32LE(total * 2, 40)
+        let off = 44
+        for (const c of chunks) {
+          for (let i = 0; i < c.length; i++) {
+            buf.writeInt16LE(c[i], off)
+            off += 2
+          }
+        }
+        fs.writeFileSync(OUT, buf)
+        await ctx.close()
+
+        return {
+          ok: true,
+          contextRate: ctx.sampleRate,
+          totalSamples: total,
+          expected: SECONDS * 16000,
+          coveragePct: Math.round((total / (SECONDS * 16000)) * 100),
+          rms: Number(rms.toFixed(5)),
+          peak: Number(peak.toFixed(4))
+        }
+      }
+    </script>
+  </body>
+</html>

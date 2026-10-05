@@ -1,0 +1,291 @@
+:root {
+  --panel-bg: rgba(16, 17, 22, 0.92);
+  --text-strong: #ffffff;
+  --text-mid: rgba(255, 255, 255, 0.9);
+  --text-weak: rgba(255, 255, 255, 0.62);
+  --accent: #4c8dff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  font-family: 'Microsoft YaHei UI', 'Microsoft YaHei', -apple-system, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  height: 100%;
+}
+
+/* ---------- 字幕悬浮窗 ---------- */
+
+.panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-bg);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.toolbar {
+  height: 30px;
+  flex: 0 0 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 0 12px;
+  color: var(--text-weak);
+  opacity: 0.35;
+  transition: opacity 0.18s ease;
+}
+
+.panel:hover .toolbar {
+  opacity: 1;
+}
+
+.brand {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.icon-btn {
+  -webkit-app-region: no-drag;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-weak);
+  cursor: pointer;
+}
+
+.icon-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-strong);
+}
+
+.icon-btn.danger:hover {
+  background: rgba(255, 86, 86, 0.85);
+  color: #fff;
+}
+
+.subtitle-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 4px 18px 8px;
+  overflow: hidden;
+}
+
+.line {
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.line.faded {
+  opacity: 0.5;
+}
+
+.line.partial {
+  opacity: 0.92;
+}
+
+.source-text {
+  color: var(--text-weak);
+  font-weight: 400;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+}
+
+/* 最新那一行（含正在识别的草稿行）的原文也跟着高亮，
+   历史行的原文保持弱化，避免和译文抢注意力 */
+.line.latest .source-text,
+.line.partial .source-text {
+  color: var(--text-mid);
+  font-weight: 500;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.target-text {
+  color: var(--text-strong);
+  font-weight: 600;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.9), 0 0 2px rgba(0, 0, 0, 0.9);
+}
+
+.status-bar {
+  flex: 0 0 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  font-size: 11px;
+  color: var(--text-weak);
+}
+
+.status-bar .spacer {
+  flex: 1;
+}
+
+.status-bar .hint {
+  opacity: 0.8;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #6b7280;
+}
+
+.dot.on {
+  background: #35d07f;
+  box-shadow: 0 0 6px rgba(53, 208, 127, 0.8);
+}
+
+.dot.off {
+  background: #ff5b5b;
+}
+
+/* ---------- 设置窗口 ---------- */
+
+.settings {
+  min-height: 100%;
+  background: #f6f7f9;
+  color: #1f2430;
+  padding: 20px 22px 28px;
+  font-size: 13px;
+}
+
+.settings h1 {
+  font-size: 18px;
+  margin: 0 0 16px;
+}
+
+.settings section {
+  background: #fff;
+  border: 1px solid #e6e8ee;
+  border-radius: 10px;
+  padding: 12px 14px 14px;
+  margin-bottom: 14px;
+}
+
+.settings h2 {
+  font-size: 13px;
+  font-weight: 600;
+  color: #4a5163;
+  margin: 0 0 10px;
+}
+
+.settings .row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+}
+
+.settings .row > span {
+  flex: 0 0 150px;
+  color: #333a49;
+}
+
+.settings .row.slider > span {
+  flex: 0 0 150px;
+}
+
+.settings input[type='text'],
+.settings input:not([type]),
+.settings select {
+  flex: 1;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #d8dce6;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 13px;
+  color: #1f2430;
+}
+
+.settings input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.settings .row.switch {
+  justify-content: space-between;
+}
+
+.settings .row.switch input {
+  flex: 0 0 auto;
+}
+
+.settings .row.slider input[type='range'] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.settings .row.action {
+  justify-content: flex-start;
+}
+
+.settings button {
+  height: 30px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settings button:hover {
+  filter: brightness(1.05);
+}
+
+.settings .ok {
+  color: #1a9e5c;
+}
+
+.settings .bad {
+  color: #d3453c;
+}
+
+.settings .tip {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.6;
+}
+
+.settings code {
+  background: #eef1f6;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 11px;
+}

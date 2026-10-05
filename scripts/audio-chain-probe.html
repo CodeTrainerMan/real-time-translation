@@ -1,0 +1,213 @@
+<!doctype html>
+<html>
+  <body>
+    <script>
+      const SECONDS = 6
+
+      const TAP_WORKLET = `
+class PcmTap extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.n = 0; this.sum = 0; this.peak = 0; this.windows = 0; this.silent = 0; this.buf = 0;
+  }
+  process(inputs) {
+    const input = inputs[0];
+    if (!input || input.length === 0) return true;
+    const ch = input[0];
+    if (!ch) return true;
+    let wmax = 0;
+    for (let i = 0; i < ch.length; i++) {
+      const v = ch[i];
+      this.sum += v * v;
+      this.n++;
+      const a = v < 0 ? -v : v;
+      if (a > this.peak) this.peak = a;
+      if (a > wmax) wmax = a;
+    }
+    this.buf += ch.length;
+    if (this.buf >= sampleRate * 0.1) {
+      this.windows++;
+      if (wmax < 0.01) this.silent++;
+      this.buf = 0;
+    }
+    if (this.n >= sampleRate * 1) {
+      this.port.postMessage({
+        samples: this.n,
+        rms: Math.sqrt(this.sum / this.n),
+        peak: this.peak,
+        silent: this.windows ? Math.round((100 * this.silent) / this.windows) : -1
+      });
+      this.n = 0; this.sum = 0; this.peak = 0; this.windows = 0; this.silent = 0;
+    }
+    return true;
+  }
+}
+registerProcessor('pcm-tap', PcmTap);
+`
+
+      function getStream() {
+        return navigator.mediaDevices
+          .getUserMedia({
+            audio: { mandatory: { chromeMediaSource: 'desktop' } },
+            video: { mandatory: { chromeMediaSource: 'desktop' } }
+          })
+          .then((stream) => {
+            stream.getVideoTracks().forEach((t) => t.stop())
+            return stream
+          })
+      }
+
+      async function viaRecorder() {
+        const stream = await getStream()
+        const src = stream.getAudioTracks()[0]
+        const trackInfo = JSON.stringify(src ? src.getSettings() : {})
+        const chunks = []
+        const rec = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' })
+        rec.ondataavailable = (e) => chunks.push(e.data)
+        rec.start()
+        await new Promise((r) => setTimeout(r, SECONDS * 1000))
+        await new Promise((r) => {
+          rec.onstop = r
+          rec.stop()
+        })
+        stream.getTracks().forEach((t) => t.stop())
+        const blob = new Blob(chunks, { type: 'audio/webm;codecs=opus' })
+        const buf = await blob.arrayBuffer()
+        const ctx = new AudioContext({ sampleRate: 48000 })
+        const out = { name: 'MediaRecorder(opus)', rate: 48000, node: 'recorder', trackInfo, rms: 0, peak: 0, silentPct: -1, samples: 0, error: '' }
+        try {
+          const audio = await ctx.decodeAudioData(buf)
+          const data = audio.getChannelData(0)
+          let sum = 0
+          let peak = 0
+          let windows = 0
+          let sil = 0
+          for (let i = 0; i < data.length; i++) {
+            const v = data[i]
+            sum += v * v
+            const a = Math.abs(v)
+            if (a > peak) peak = a
+          }
+          for (let i = 0; i + 4800 < data.length; i += 4800) {
+            let m = 0
+            for (let j = i; j < i + 4800; j++) {
+              const a = Math.abs(data[j])
+              if (a > m) m = a
+            }
+            windows++
+            if (m < 0.01) sil++
+          }
+          out.rms = Math.sqrt(sum / Math.max(data.length, 1))
+          out.peak = peak
+          out.silentPct = windows ? Math.round((100 * sil) / windows) : -1
+          out.samples = data.length
+        } catch (e) {
+          out.error = e.message
+        }
+        try {
+          ctx.close()
+        } catch (e) {}
+        return out
+      }
+
+      async function viaWebAudio(ctxRate, nodeKind) {
+        const stream = await getStream()
+        const track = stream.getAudioTracks()[0]
+        const trackInfo = JSON.stringify(track ? track.getSettings() : {})
+        let ctx
+        try {
+          ctx = new AudioContext(ctxRate ? { sampleRate: ctxRate } : {})
+        } catch (e) {
+          ctx = new AudioContext()
+        }
+        if (ctx.state === 'suspended') await ctx.resume()
+        const source = ctx.createMediaStreamSource(stream)
+        const gain = ctx.createGain()
+        gain.gain.value = 0
+        gain.connect(ctx.destination)
+
+        const result = { name: `AudioContext(${ctxRate || 'default'})+${nodeKind}`, rate: ctx.sampleRate, node: nodeKind, trackInfo, rms: 0, peak: 0, silentPct: -1, samples: 0, error: '' }
+        const stop = () => {
+          stream.getTracks().forEach((t) => t.stop())
+          try {
+            ctx.close()
+          } catch (e) {}
+        }
+
+        if (nodeKind === 'worklet') {
+          const blob = new Blob([TAP_WORKLET], { type: 'application/javascript' })
+          const url = URL.createObjectURL(blob)
+          try {
+            await ctx.audioWorklet.addModule(url)
+          } catch (e) {
+            URL.revokeObjectURL(url)
+            result.error = 'addModule: ' + e.message
+            stop()
+            return result
+          }
+          URL.revokeObjectURL(url)
+          const node = new AudioWorkletNode(ctx, 'pcm-tap')
+          const got = new Promise((resolve) => {
+            node.port.onmessage = (e) => {
+              Object.assign(result, e.data)
+              stop()
+              resolve(result)
+            }
+            setTimeout(() => {
+              result.error = result.error || 'no tap message'
+              stop()
+              resolve(result)
+            }, SECONDS * 1000)
+          })
+          source.connect(node)
+          node.connect(gain)
+          return got
+        }
+
+        const node = ctx.createScriptProcessor(4096, 1, 1)
+        let sum = 0
+        let n = 0
+        let peak = 0
+        let windows = 0
+        let sil = 0
+        node.onaudioprocess = (e) => {
+          const ch = e.inputBuffer.getChannelData(0)
+          let m = 0
+          for (let i = 0; i < ch.length; i++) {
+            const v = ch[i]
+            sum += v * v
+            n++
+            const a = Math.abs(v)
+            if (a > peak) peak = a
+            if (a > m) m = a
+          }
+          windows++
+          if (m < 0.01) sil++
+        }
+        source.connect(node)
+        node.connect(gain)
+        await new Promise((r) => setTimeout(r, SECONDS * 1000))
+        result.rms = n ? Math.sqrt(sum / n) : 0
+        result.peak = peak
+        result.silentPct = windows ? Math.round((100 * sil) / windows) : -1
+        result.samples = n
+        stop()
+        return result
+      }
+
+      window.runProbe = async () => {
+        const cases = [viaRecorder, () => viaWebAudio(48000, 'worklet'), () => viaWebAudio(16000, 'worklet'), () => viaWebAudio(16000, 'script'), () => viaWebAudio(null, 'script')]
+        const out = []
+        for (const c of cases) {
+          try {
+            const r = await c()
+            out.push(r)
+          } catch (e) {
+            out.push({ name: 'FAILED', error: e.message, rms: 0, peak: 0, silentPct: -1, samples: 0, rate: 0, trackInfo: '' })
+          }
+        }
+        return out
+      }
+    </script>
+  </body>
+</html>

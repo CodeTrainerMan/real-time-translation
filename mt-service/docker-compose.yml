@@ -1,0 +1,33 @@
+# 轻量本地翻译服务（英文 → 中文），端口 9910。
+#
+# ⚠️ 这不是日常用的那一套：这里是 OPUS-MT 的 Marian 小模型，译文质量明显差于
+# NLLB（数字、复合句都会翻错），只作为"不方便用 1.3B 镜像时"的兜底。
+# 日常请起 NLLB：
+#   docker compose -f docker-compose.nllb.yml up -d
+# 两个编排用的是同一个容器名 realtime-translation-mt，谁后起谁生效 —— 这也是之前
+# "重启服务后翻译质量暴跌"的原因：起了这个 opus 变体把 NLLB 顶掉了。
+#
+# 用的是专门的机器翻译模型（OPUS-MT 的 Marian 系列）+ CTranslate2 推理引擎，不是大模型。
+# 首次启动会把模型（约 300MB）下载到 ./models/mt-en-zh，之后复用。
+#
+# 国内下载 HuggingFace 慢时换镜像站：
+#   HF_ENDPOINT=https://hf-mirror.com docker compose up -d
+#
+# 想用官方模型自行转换（Helsinki-NLP/opus-mt-tc-big-en-zh，质量更好，构建需下 torch）：
+#   docker compose -f docker-compose.buildmodel.yml build && docker compose -f docker-compose.buildmodel.yml up -d
+services:
+  mt:
+    build: .
+    image: realtime-translation-mt:latest
+    container_name: realtime-translation-mt
+    ports:
+      - "9910:9910"
+    volumes:
+      - ./models:/models
+    environment:
+      MT_DEVICE: "cpu"
+      # opus 对 int8 量化敏感（实测译文明显劣化），CPU 上默认 fp32
+      MT_COMPUTE_TYPE: "float32"
+      MT_BEAM_SIZE: "4"
+      HF_ENDPOINT: "https://huggingface.co"
+    restart: unless-stopped

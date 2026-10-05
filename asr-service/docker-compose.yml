@@ -1,0 +1,53 @@
+# 本地流式语音识别服务（sherpa-onnx），给 Real-timeTranslation 提供语音识别。
+#
+# 默认只启英文服务 asr-en（9901）：本项目主场景是"英文音源 → 中文字幕"。
+# 需要识别中文音源时把 asr-zh（9902）一起起（--profile zh），或把应用设置里的
+# 识别服务地址改成对应的端口。
+#
+# 首次 up 会把模型下载到 ./models（之后复用，不重复下载）。
+services:
+  asr-en:
+    build: .
+    image: realtime-translation-asr:latest
+    container_name: realtime-translation-asr-en
+    ports:
+      - "9901:9901"
+    volumes:
+      - ./models:/models
+    environment:
+      ASR_PORT: "9901"
+      # en = 2023-06-26（输出全大写、无标点）
+      # en-kroko = 2025-08-06（实测更准，且自带大小写和标点，当前默认）
+      ASR_MODEL: "en-kroko"
+      ASR_QUANT: "int8"
+      # 服务端判"说完一句"所需的尾部静音时长。调小则句子被切碎，还常常把
+      # 单词从中间劈开（"Win dows" / "transfor ming"）；调大则整句更完整，
+      # 代价是换行要等更久。应用侧还有 pauseMs 和长度上限兜底，不会堆成长句。
+      # 连续讲话实测：1.2 / 1.6 秒都会把句子从中间切断（"everyone, welcome to
+      # today's meeting" 丢了开头、句号单独成一行，1.6 秒甚至丢了整句），
+      # 2.0 秒才稳定；代价是两句之间的短停顿（1~2 秒）服务端不判，
+      # 由应用的 segmentPauseMs（默认 1800ms）兜底换行。
+      ASR_TRAILING_SILENCE: "2.0"
+      # 端点检测：true 时服务端按"音频静音"切句并回 is_final，字幕能及时落定。
+      # 实测关掉（false）后服务端不再分段，只能靠应用的停顿阈值兜底，字幕会
+      # 整体滞后一句，故保持开启。它偶尔会把单词从中间切断，代价远小于滞后。
+      ASR_ENDPOINT: "true"
+      ASR_NUM_THREADS: "2"
+    restart: unless-stopped
+
+  asr-zh:
+    build: .
+    image: realtime-translation-asr:latest
+    container_name: realtime-translation-asr-zh
+    profiles: ["zh"]
+    ports:
+      - "9902:9902"
+    volumes:
+      - ./models:/models
+    environment:
+      ASR_PORT: "9902"
+      ASR_MODEL: "zh"
+      ASR_QUANT: "int8"
+      ASR_TRAILING_SILENCE: "0.8"
+      ASR_NUM_THREADS: "2"
+    restart: unless-stopped
